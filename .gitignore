@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node (VS Code extension)
+node_modules/
+*.vsix
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+
+# Analysis output
+.analysis/
+
+# Config (contains credentials)
+.claude/mcp-pg.yaml
+mcp-pg.yaml
+*.yaml:Zone.Identifier
+
+# Logs
+*.log
+
+# Dev Environment
+.gemini/
+.codex/
+.agent/
+.analysis/
+.claude/
