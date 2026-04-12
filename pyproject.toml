@@ -1,0 +1,83 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mcp-litellm"
+version = "0.1.0"
+description = "MCP server for LiteLLM native API workflows"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+  "httpx>=0.28.1",
+  "mcp>=1.18.0",
+  "pydantic>=2.11.0",
+  "pydantic-settings>=2.10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.18.0",
+  "pre-commit>=4.3.0",
+  "pytest>=8.4.0",
+  "pytest-asyncio>=1.1.0",
+  "respx>=0.22.0",
+  "ruff>=0.12.0",
+  "vulture>=2.14",
+]
+
+[project.scripts]
+mcp-litellm = "mcp_litellm.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_litellm"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 130
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = ["COM812", "D203", "D213", "ISC001"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D103", "ANN", "ARG001", "S", "SLF001", "EM", "TRY003", "PLC0415", "PLR2004"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.14"
+files = ["src", "tests"]
+mypy_path = ["src"]
+disallow_untyped_defs = true
+check_untyped_defs = true
+warn_unused_configs = true
+warn_unused_ignores = true
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = ["respx"]
+ignore_missing_imports = true
+
+[tool.vulture]
+paths = ["src/mcp_litellm", "tests"]
+min_confidence = 80
+ignore_decorators = [
+  "@pytest.fixture",
+  "@click.command",
+  "@click.group",
+]
+ignore_names = [
+  "pytest_*",
+  "test_*",
+  "_pytest_*",
+]

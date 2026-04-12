@@ -1,0 +1,36 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: env UV_CACHE_DIR=/tmp/uv-cache uv run --no-sync ruff format
+        language: system
+        types_or: [python, pyi]
+      - id: ruff-check
+        name: ruff check
+        entry: env UV_CACHE_DIR=/tmp/uv-cache uv run --no-sync ruff check --fix
+        language: system
+        types_or: [python, pyi]
+      - id: mypy
+        name: mypy
+        entry: env UV_CACHE_DIR=/tmp/uv-cache uv run --no-sync mypy
+        language: system
+        pass_filenames: false
+      - id: vulture
+        name: vulture
+        entry: env UV_CACHE_DIR=/tmp/uv-cache uv run --no-sync vulture
+        language: system
+        pass_filenames: false
+      - id: gitleaks
+        name: gitleaks
+        entry: gitleaks protect --staged --redact --verbose
+        language: system
+        pass_filenames: false
+      - id: actionlint
+        name: actionlint
+        entry: >-
+          bash -lc 'docker run --rm -v "$PWD:/repo" -w /repo
+          docker.io/rhysd/actionlint:1.7.12 actionlint "$@"' --
+        language: system
+        files: ^\.github/workflows/
+        types: [yaml]
