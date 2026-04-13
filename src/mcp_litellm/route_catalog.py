@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from mcp_litellm.config import get_settings
 from mcp_litellm.errors import UnknownLiteLLMRouteError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-    from pathlib import Path
+    from collections.abc import Iterable, Mapping
 
 RouteClassification = Literal[
     "typed",
@@ -84,24 +84,23 @@ TYPED_PATH_PREFIXES = (
     "/in_product_nudges",
 )
 
-PASS_THROUGH_PREFIXES = (
-    "/openai/{endpoint}",
-    "/openai_passthrough/{endpoint}",
-    "/anthropic/{endpoint}",
-    "/azure/{endpoint}",
-    "/azure_ai/{endpoint}",
-    "/vertex_ai/{endpoint}",
-    "/vertex_ai/discovery/{endpoint}",
-    "/bedrock/{endpoint}",
-    "/cohere/{endpoint}",
-    "/mistral/{endpoint}",
-    "/vllm/{endpoint}",
-    "/milvus/{endpoint}",
-    "/gemini/{endpoint}",
-    "/assemblyai/{endpoint}",
-    "/eu.assemblyai/{endpoint}",
-    "/langfuse/{endpoint}",
-    "/cursor/{endpoint}",
+PASS_THROUGH_PATH_PREFIXES = (
+    "/openai/",
+    "/openai_passthrough/",
+    "/anthropic/",
+    "/azure/",
+    "/azure_ai/",
+    "/vertex_ai/",
+    "/bedrock/",
+    "/cohere/",
+    "/mistral/",
+    "/vllm/",
+    "/milvus/",
+    "/gemini/",
+    "/assemblyai/",
+    "/eu.assemblyai/",
+    "/langfuse/",
+    "/cursor/",
 )
 
 PROTOCOL_EXACT_PATHS = {
@@ -154,7 +153,7 @@ def _is_protocol_path(method: str, path: str) -> bool:
 
 
 def _is_pass_through_path(path: str) -> bool:
-    return path in PASS_THROUGH_PREFIXES
+    return _matches_prefix(path, PASS_THROUGH_PATH_PREFIXES)
 
 
 def _is_alias_path(path: str, all_paths: set[str]) -> bool:
@@ -193,13 +192,18 @@ def _is_alias_path(path: str, all_paths: set[str]) -> bool:
     return bool(deployment_canonical_path and deployment_canonical_path in all_paths)
 
 
-def _classify_route(method: str, path: str, all_paths: set[str]) -> RouteClassification:
-    if _is_pass_through_path(path):
-        return "excluded_pass_through"
-    if _is_protocol_path(method, path):
+def _classify_route(
+    method: str,
+    path: str,
+    all_paths: set[str],
+    tags: tuple[str, ...],
+) -> RouteClassification:
+    if _is_protocol_path(method, path) or "WebSocket" in tags:
         return "excluded_protocol"
     if _is_alias_path(path, all_paths):
         return "alias"
+    if _is_pass_through_path(path):
+        return "excluded_pass_through"
     if _matches_prefix(path, TYPED_PATH_PREFIXES):
         return "typed"
     return "generic_native"
@@ -211,16 +215,17 @@ def load_openapi_spec(path: Path | None = None) -> dict:
     return json.loads(source.read_text())
 
 
-@lru_cache(maxsize=1)
-def build_route_catalog(path: Path | None = None) -> dict[str, RouteInfo]:
+@cache
+def _build_route_catalog_cached(resolved_path: str) -> dict[str, RouteInfo]:
     """Build the normalized route catalog from the vendored LiteLLM spec."""
-    spec = load_openapi_spec(path=path)
+    spec = load_openapi_spec(path=Path(resolved_path))
     all_paths = set(spec["paths"])
     catalog: dict[str, RouteInfo] = {}
 
     for route_path, operations in spec["paths"].items():
         for method, operation in operations.items():
             operation_method = method.upper()
+            tags = tuple(operation.get("tags", ()))
             key = route_key(operation_method, route_path)
             catalog[key] = RouteInfo(
                 key=key,
@@ -228,28 +233,44 @@ def build_route_catalog(path: Path | None = None) -> dict[str, RouteInfo]:
                 path=route_path,
                 summary=operation.get("summary", ""),
                 operation_id=operation.get("operationId"),
-                tags=tuple(operation.get("tags", ())),
-                classification=_classify_route(operation_method, route_path, all_paths),
+                tags=tags,
+                classification=_classify_route(operation_method, route_path, all_paths, tags),
             )
 
     return catalog
 
 
-def get_route(route_key_value: str) -> RouteInfo:
+def build_route_catalog(path: Path | None = None) -> dict[str, RouteInfo]:
+    """Build the normalized route catalog from the vendored LiteLLM spec."""
+    resolved_path = (path or get_settings().resolved_openapi_path).resolve()
+    return _build_route_catalog_cached(str(resolved_path))
+
+
+def get_route(
+    route_key_value: str,
+    *,
+    catalog: Mapping[str, RouteInfo] | None = None,
+    path: Path | None = None,
+) -> RouteInfo:
     """Return a single route definition by its canonical route key."""
-    catalog = build_route_catalog()
+    resolved_catalog = catalog or build_route_catalog(path)
     try:
-        return catalog[route_key_value]
+        return resolved_catalog[route_key_value]
     except KeyError as exc:  # pragma: no cover - thin wrapper
         raise UnknownLiteLLMRouteError(route_key_value) from exc
 
 
-def list_routes(*, classifications: set[RouteClassification] | None = None) -> list[RouteInfo]:
+def list_routes(
+    *,
+    classifications: set[RouteClassification] | None = None,
+    catalog: Mapping[str, RouteInfo] | None = None,
+    path: Path | None = None,
+) -> list[RouteInfo]:
     """List LiteLLM routes, optionally filtered by classification."""
-    catalog = build_route_catalog().values()
+    resolved_catalog = (catalog or build_route_catalog(path)).values()
     if classifications is None:
-        return sorted(catalog, key=lambda route: route.key)
+        return sorted(resolved_catalog, key=lambda route: route.key)
     return sorted(
-        (route for route in catalog if route.classification in classifications),
+        (route for route in resolved_catalog if route.classification in classifications),
         key=lambda route: route.key,
     )

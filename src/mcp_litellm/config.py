@@ -10,6 +10,21 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+PACKAGE_ROOT = Path(__file__).resolve().parent
+
+
+def default_openapi_path() -> Path:
+    """Resolve the bundled OpenAPI snapshot path without depending on cwd."""
+    packaged_path = PACKAGE_ROOT / "_data" / "openapi.json"
+    if packaged_path.exists():
+        return packaged_path
+
+    repo_vendored_path = PACKAGE_ROOT.parents[1] / "vendor" / "litellm" / "openapi.json"
+    if repo_vendored_path.exists():
+        return repo_vendored_path
+
+    return packaged_path
+
 
 class Settings(BaseSettings):
     """Environment-driven settings for the LiteLLM MCP server."""
@@ -24,6 +39,7 @@ class Settings(BaseSettings):
     litellm_base_url: str = Field(default="http://127.0.0.1:4000")
     litellm_api_key: str | None = Field(default=None)
     timeout_seconds: float = Field(default=60.0, gt=0)
+    max_response_bytes: int = Field(default=5_000_000, gt=0)
     include_bearer_auth: bool = Field(default=True)
 
     transport: Literal["stdio", "sse", "streamable-http"] = Field(default="stdio")
@@ -34,7 +50,7 @@ class Settings(BaseSettings):
     message_path: str = Field(default="/messages/")
     streamable_http_path: str = Field(default="/mcp")
 
-    openapi_path: Path = Field(default=Path("vendor/litellm/openapi.json"))
+    openapi_path: Path = Field(default_factory=default_openapi_path)
     tool_profiles: tuple[str, ...] = Field(default=("core",))
     enable_tools: tuple[str, ...] = Field(default=())
     disable_tools: tuple[str, ...] = Field(default=())

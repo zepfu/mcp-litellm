@@ -19,7 +19,7 @@ non-provider-pass-through endpoints.
   `litellm://routes/typed`,
   `litellm://tools/actions`,
   `litellm://tools/active`.
-- A vendored LiteLLM OpenAPI snapshot in `vendor/litellm/openapi.json`.
+- A bundled vendored LiteLLM OpenAPI snapshot, overrideable via `MCP_LITELLM_OPENAPI_PATH`.
 - A root [`TOOLS.md`](TOOLS.md) reference covering every MCP tool exposed by this server.
 
 ## Requirements
@@ -30,24 +30,60 @@ non-provider-pass-through endpoints.
 
 ## Configuration
 
-Set these environment variables before running the server:
+The server is configured from three sources:
 
-- `MCP_LITELLM_LITELLM_BASE_URL`
-  Example: `http://127.0.0.1:4000`
-- `MCP_LITELLM_LITELLM_API_KEY`
-  LiteLLM API key or proxy key
-- `MCP_LITELLM_TRANSPORT`
-  Optional. One of `stdio`, `sse`, `streamable-http`
-- `MCP_LITELLM_HOST`
-  Optional HTTP host for non-stdio transports
-- `MCP_LITELLM_PORT`
-  Optional HTTP port for non-stdio transports
-- `MCP_LITELLM_TOOL_PROFILES`
-  Optional. Comma-separated list or JSON array of tool profiles. Defaults to `core`.
-- `MCP_LITELLM_ENABLE_TOOLS`
-  Optional. Comma-separated list or JSON array of individual tool names to force-enable.
-- `MCP_LITELLM_DISABLE_TOOLS`
-  Optional. Comma-separated list or JSON array of individual tool names to disable after profile resolution.
+1. `.env`
+2. Environment variables prefixed with `MCP_LITELLM_`
+3. CLI flags
+
+CLI flags override environment-derived values. The `.env.example` file shows the
+minimal baseline.
+
+### Server Settings
+
+| Setting | Env var | Default | Intent |
+|---|---|---|---|
+| `litellm_base_url` | `MCP_LITELLM_LITELLM_BASE_URL` | `http://127.0.0.1:4000` | Base URL for the LiteLLM proxy being wrapped. |
+| `litellm_api_key` | `MCP_LITELLM_LITELLM_API_KEY` | unset | LiteLLM API key or proxy key. |
+| `timeout_seconds` | `MCP_LITELLM_TIMEOUT_SECONDS` | `60.0` | Upstream LiteLLM request timeout. |
+| `max_response_bytes` | `MCP_LITELLM_MAX_RESPONSE_BYTES` | `5000000` | Maximum upstream response body size accepted into MCP tool output. |
+| `include_bearer_auth` | `MCP_LITELLM_INCLUDE_BEARER_AUTH` | `true` | Whether to send bearer auth when an API key is present. |
+| `transport` | `MCP_LITELLM_TRANSPORT` | `stdio` | MCP transport: `stdio`, `sse`, or `streamable-http`. |
+| `host` | `MCP_LITELLM_HOST` | `127.0.0.1` | Bind host for HTTP transports. |
+| `port` | `MCP_LITELLM_PORT` | `8000` | Bind port for HTTP transports. |
+| `mount_path` | `MCP_LITELLM_MOUNT_PATH` | `/` | Root mount path for HTTP transports. |
+| `sse_path` | `MCP_LITELLM_SSE_PATH` | `/sse` | SSE endpoint path when using `sse`. |
+| `message_path` | `MCP_LITELLM_MESSAGE_PATH` | `/messages/` | SSE message endpoint path. |
+| `streamable_http_path` | `MCP_LITELLM_STREAMABLE_HTTP_PATH` | `/mcp` | Streamable HTTP endpoint path. |
+| `openapi_path` | `MCP_LITELLM_OPENAPI_PATH` | bundled package snapshot | LiteLLM OpenAPI snapshot to load. |
+| `tool_profiles` | `MCP_LITELLM_TOOL_PROFILES` | `core` | Base startup toolset profile list. |
+| `enable_tools` | `MCP_LITELLM_ENABLE_TOOLS` | empty | Individual tool names to add after profile resolution. |
+| `disable_tools` | `MCP_LITELLM_DISABLE_TOOLS` | empty | Individual tool names to remove after profile resolution. |
+
+### CLI Flags
+
+The entrypoint also accepts these runtime overrides:
+
+| Flag | Intent |
+|---|---|
+| `--transport` | Override the MCP transport. |
+| `--host` | Override the HTTP bind host. |
+| `--port` | Override the HTTP bind port. |
+| `--tool-profile` | Add one or more tool profiles. Repeat the flag or pass a comma-separated list. |
+| `--enable-tool` | Force-enable one or more individual tools. |
+| `--disable-tool` | Disable one or more individual tools after all enables are applied. |
+
+### Example `.env`
+
+```dotenv
+MCP_LITELLM_LITELLM_BASE_URL=http://127.0.0.1:4000
+MCP_LITELLM_LITELLM_API_KEY=sk-your-litellm-key
+MCP_LITELLM_TRANSPORT=stdio
+MCP_LITELLM_MAX_RESPONSE_BYTES=5000000
+MCP_LITELLM_TOOL_PROFILES=core
+MCP_LITELLM_ENABLE_TOOLS=
+MCP_LITELLM_DISABLE_TOOLS=
+```
 
 ## Tool Loading
 
@@ -87,6 +123,37 @@ Notes:
   `native_escape_hatch` profile or `enable_tools`.
 - `litellm://tools/active` reports the exact resolved toolset for a running server instance.
 - This is especially useful for `stdio` MCP clients where each client session usually owns its own server process.
+
+## Client Launch Configuration
+
+For `stdio` MCP clients, configure the client to launch `mcp-litellm` with the
+desired environment and tool flags for that client instance.
+
+Example `Codex` config:
+
+```toml
+[mcp_servers.litellm]
+command = "env"
+args = [
+  "UV_CACHE_DIR=/tmp/uv-cache",
+  "MCP_LITELLM_LITELLM_BASE_URL=http://127.0.0.1:4000",
+  "MCP_LITELLM_LITELLM_API_KEY=sk-your-litellm-key",
+  "uv",
+  "run",
+  "--directory",
+  "/absolute/path/to/mcp-litellm",
+  "--no-sync",
+  "mcp-litellm",
+  "--tool-profile",
+  "platform_admin",
+  "--disable-tool",
+  "litellm_config_admin",
+]
+```
+
+That same pattern applies to other `stdio` MCP clients: point them at the
+server command, pass the LiteLLM connection settings, and narrow the toolset
+with profiles and explicit tool flags.
 
 ## Install
 

@@ -5,18 +5,22 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
+from contextlib import ExitStack
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, BinaryIO
 from urllib.parse import urljoin
 
 import httpx
 
-from mcp_litellm.errors import InvalidMultipartBodyError, LiteLLMRequestError
+from mcp_litellm.errors import (
+    InvalidMultipartBodyError,
+    LiteLLMRequestError,
+    LiteLLMResponseTooLargeError,
+)
 
 if TYPE_CHECKING:
     from mcp_litellm.config import Settings
-
-JsonValue = dict[str, Any] | list[Any] | str | int | float | bool | None
+    from mcp_litellm.models import JsonValue, MultipartFileSpec
 
 
 class LiteLLMClient:
@@ -38,15 +42,18 @@ class LiteLLMClient:
 
     @staticmethod
     def _build_files(
-        multipart_files: list[dict[str, str]] | None,
-    ) -> list[tuple[str, tuple[str, bytes, str]]]:
-        files: list[tuple[str, tuple[str, bytes, str]]] = []
+        multipart_files: tuple[MultipartFileSpec, ...] | None,
+        *,
+        exit_stack: ExitStack,
+    ) -> list[tuple[str, tuple[str, BinaryIO, str]]]:
+        files: list[tuple[str, tuple[str, BinaryIO, str]]] = []
         for file_spec in multipart_files or ():
-            field_name = file_spec["field_name"]
-            path = Path(file_spec["path"]).expanduser()
-            content_type = file_spec.get("content_type") or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-            filename = file_spec.get("filename") or path.name
-            files.append((field_name, (filename, path.read_bytes(), content_type)))
+            field_name = file_spec.field_name
+            path = Path(file_spec.path).expanduser()
+            content_type = file_spec.content_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            filename = file_spec.filename or path.name
+            file_handle = exit_stack.enter_context(path.open("rb"))
+            files.append((field_name, (filename, file_handle, content_type)))
         return files
 
     @staticmethod
@@ -65,7 +72,7 @@ class LiteLLMClient:
         return form_data
 
     @staticmethod
-    def _parse_response(response: httpx.Response) -> dict[str, Any]:
+    def _parse_response(response: httpx.Response, content: bytes) -> dict[str, Any]:
         content_type = response.headers.get("content-type", "")
         result: dict[str, Any] = {
             "ok": response.is_success,
@@ -79,19 +86,32 @@ class LiteLLMClient:
         }
 
         if "application/json" in content_type:
-            result["data"] = response.json()
+            result["data"] = json.loads(content)
             return result
 
         if content_type.startswith("text/") or "application/xml" in content_type:
-            result["text"] = response.text
+            result["text"] = content.decode(response.encoding or "utf-8")
             return result
 
         try:
-            result["text"] = response.content.decode("utf-8")
+            result["text"] = content.decode("utf-8")
         except UnicodeDecodeError:
-            result["base64"] = base64.b64encode(response.content).decode("ascii")
+            result["base64"] = base64.b64encode(content).decode("ascii")
 
         return result
+
+    async def _read_response_body(self, response: httpx.Response) -> bytes:
+        limit_bytes = self._settings.max_response_bytes
+        chunks: list[bytes] = []
+        total_bytes = 0
+
+        async for chunk in response.aiter_bytes():
+            total_bytes += len(chunk)
+            if total_bytes > limit_bytes:
+                raise LiteLLMResponseTooLargeError(limit_bytes)
+            chunks.append(chunk)
+
+        return b"".join(chunks)
 
     async def request(
         self,
@@ -100,7 +120,7 @@ class LiteLLMClient:
         *,
         query: dict[str, Any] | None = None,
         body: JsonValue = None,
-        multipart_files: list[dict[str, str]] | None = None,
+        multipart_files: tuple[MultipartFileSpec, ...] | None = None,
     ) -> dict[str, Any]:
         """Send a single HTTP request to LiteLLM and normalize the response."""
         url = urljoin(f"{self._settings.litellm_base_url.rstrip('/')}/", path.lstrip("/"))
@@ -112,18 +132,24 @@ class LiteLLMClient:
         }
 
         if multipart_files:
-            request_kwargs["files"] = self._build_files(multipart_files)
             request_kwargs["data"] = self._multipart_form_data(body)
         elif body is not None:
             request_kwargs["json"] = body
 
         try:
             async with httpx.AsyncClient(follow_redirects=True) as client:
-                response = await client.request(method=method, url=url, **request_kwargs)
+                with ExitStack() as exit_stack:
+                    if multipart_files:
+                        request_kwargs["files"] = self._build_files(
+                            multipart_files,
+                            exit_stack=exit_stack,
+                        )
+                    async with client.stream(method=method, url=url, **request_kwargs) as response:
+                        content = await self._read_response_body(response)
         except httpx.HTTPError as exc:  # pragma: no cover - thin wrapper
             raise LiteLLMRequestError(str(exc)) from exc
 
-        parsed = self._parse_response(response)
+        parsed = self._parse_response(response, content)
         parsed["method"] = method.upper()
         parsed["path"] = path
         return parsed
