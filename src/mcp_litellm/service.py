@@ -5,16 +5,20 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from mcp_litellm.errors import (
     MissingPathParametersError,
     RouteNotAllowedError,
     UnknownToolActionError,
 )
+from mcp_litellm.models import RequestOptions
 from mcp_litellm.route_catalog import RouteInfo, get_route
 
 if TYPE_CHECKING:
-    from mcp_litellm.client import JsonValue, LiteLLMClient
+    from collections.abc import Mapping
+
+    from mcp_litellm.client import LiteLLMClient
 
 PATH_PARAM_PATTERN = re.compile(r"{([^}]+)}")
 
@@ -26,22 +30,18 @@ class ActionSpec:
     route_key: str
 
 
-@dataclass(frozen=True, slots=True)
-class RequestOptions:
-    """Request details passed from an MCP tool invocation to the LiteLLM client."""
-
-    path_params: dict[str, str] | None = None
-    query: dict[str, Any] | None = None
-    body: JsonValue = None
-    multipart_files: list[dict[str, str]] | None = None
-
-
 class LiteLLMToolService:
     """Execute curated tool actions and route-key calls against LiteLLM."""
 
-    def __init__(self, client: LiteLLMClient) -> None:
+    def __init__(
+        self,
+        client: LiteLLMClient,
+        *,
+        route_catalog: Mapping[str, RouteInfo] | None = None,
+    ) -> None:
         """Create a service wrapper around the shared LiteLLM client."""
         self._client = client
+        self._route_catalog = route_catalog
 
     @staticmethod
     def _render_path(path_template: str, path_params: dict[str, str] | None) -> str:
@@ -51,8 +51,8 @@ class LiteLLMToolService:
         if missing_params:
             raise MissingPathParametersError(missing_params)
         rendered_path = path_template
-        for key, value in params.items():
-            rendered_path = rendered_path.replace(f"{{{key}}}", value)
+        for key in required_params:
+            rendered_path = rendered_path.replace(f"{{{key}}}", quote(str(params[key]), safe=""))
         return rendered_path
 
     async def execute_route(self, route: RouteInfo, options: RequestOptions | None = None) -> dict[str, Any]:
@@ -79,7 +79,7 @@ class LiteLLMToolService:
         options: RequestOptions | None = None,
     ) -> dict[str, Any]:
         """Execute a route key if its classification is within the allowed set."""
-        route = get_route(route_key)
+        route = get_route(route_key, catalog=self._route_catalog)
         if route.classification not in allowed_classifications:
             raise RouteNotAllowedError(route.key, route.classification)
         return await self.execute_route(route, options)

@@ -19,6 +19,14 @@ class LiteLLMRequestError(RuntimeError):
         super().__init__(f"LiteLLM request failed: {detail}")
 
 
+class LiteLLMResponseTooLargeError(RuntimeError):
+    """Raised when a LiteLLM response body exceeds the configured size limit."""
+
+    def __init__(self, limit_bytes: int) -> None:
+        """Initialize the exception with the configured maximum response size."""
+        super().__init__(f"LiteLLM response exceeded the configured limit of {limit_bytes} bytes.")
+
+
 class UnknownLiteLLMRouteError(KeyError):
     """Raised when a route key is not present in the vendored LiteLLM spec."""
 

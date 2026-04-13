@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-litellm"
-version = "0.1.0"
+version = "0.0.1rc2"
 description = "MCP server for LiteLLM native API workflows"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -31,6 +31,20 @@ mcp-litellm = "mcp_litellm.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_litellm"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"vendor/litellm/openapi.json" = "mcp_litellm/_data/openapi.json"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/mcp_litellm",
+  "vendor/litellm/openapi.json",
+  "README.md",
+  "TOOLS.md",
+  ".env.example",
+  ".pre-commit-config.yaml",
+  "pyproject.toml",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
