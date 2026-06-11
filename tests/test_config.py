@@ -78,8 +78,11 @@ def test_default_openapi_path_raises_when_absent(monkeypatch: pytest.MonkeyPatch
         config_module.default_openapi_path()
 
     error_message = str(exc_info.value)
-    # Both probed paths must appear in the error message
-    assert "_data" in error_message or "openapi" in error_message
+    # Both probed path fragments must appear: the packaged _data path AND the
+    # repo-vendored path. A weaker "or" check would let a regression that drops
+    # one probe slip through.
+    assert str(Path("_data") / "openapi.json") in error_message
+    assert str(Path("vendor") / "litellm" / "openapi.json") in error_message
 
 
 # ---------------------------------------------------------------------------
