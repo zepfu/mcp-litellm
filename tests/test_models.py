@@ -44,3 +44,47 @@ def test_multipart_file_spec_requires_existing_file(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError, match="Path does not point to a file"):
         MultipartFileSpec(field_name="file", path=missing_file)
+
+
+# ---------------------------------------------------------------------------
+# §2.2 path_params reject None/bool
+# ---------------------------------------------------------------------------
+
+
+def test_path_params_reject_none_value() -> None:
+    """path_params with a None value must raise ValidationError."""
+    raw_options: dict[str, Any] = {"path_params": {"k": None}}
+
+    with pytest.raises(ValidationError):
+        RequestOptions.model_validate(raw_options)
+
+
+def test_path_params_reject_bool_value() -> None:
+    """path_params with a bool value must raise ValidationError."""
+    raw_options: dict[str, Any] = {"path_params": {"k": True}}
+
+    with pytest.raises(ValidationError):
+        RequestOptions.model_validate(raw_options)
+
+
+def test_path_params_still_coerce_int() -> None:
+    """Integer path param values must still coerce to str (regression guard)."""
+    raw_options: dict[str, Any] = {"path_params": {"k": 123}}
+    options = RequestOptions.model_validate(raw_options)
+
+    assert options.path_params == {"k": "123"}
+
+
+# ---------------------------------------------------------------------------
+# §4.9 LiteLLMResponse TypedDict importable
+# ---------------------------------------------------------------------------
+
+
+def test_litellm_response_typeddict_importable() -> None:
+    """LiteLLMResponse must be importable from mcp_litellm.models and be a TypedDict."""
+    from mcp_litellm.models import LiteLLMResponse  # type: ignore[attr-defined]
+
+    # TypedDicts have __annotations__ and are not plain dicts at the class level
+    assert hasattr(LiteLLMResponse, "__annotations__")
+    # Verify it is actually a TypedDict class (has __total__ attribute)
+    assert hasattr(LiteLLMResponse, "__total__")
