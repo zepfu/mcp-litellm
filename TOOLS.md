@@ -83,6 +83,7 @@ The family tools all share the same request shape.
 - Scope:
   - Allowed: `typed`, `generic_native`
   - Blocked: `alias`, `excluded_pass_through`, `excluded_protocol`
+- When a family tool is inactive or disabled (for example via `--disable-tool`), the `typed` routes it owns are denied through `litellm_native_request`, so the escape hatch never exposes routes belonging to inactive families.
 
 ## Family Tools
 

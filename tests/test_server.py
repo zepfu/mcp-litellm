@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+import respx
+from httpx import Response
 from mcp.server.fastmcp.exceptions import ToolError
 
 from mcp_litellm.config import Settings
@@ -147,6 +149,19 @@ async def test_native_request_denies_disabled_family_routes() -> None:
             {"route_key": "GET /config/cost_discount_config"},
         )
 
+    # ALLOW side: a route owned by a STILL-ACTIVE family (litellm_keys) that is
+    # NOT denied must reach the client. This guards against a deny-everything
+    # regression silently passing the deny-side assertion above.
+    with respx.mock(assert_all_called=False) as router:
+        router.get("http://127.0.0.1:4000/key/info").mock(return_value=Response(200, json={}))
+        _, result = await server.call_tool(
+            "litellm_native_request",
+            {"route_key": "GET /key/info"},
+        )
+
+    structured_result = cast("dict[str, Any]", result)
+    assert structured_result["ok"] is True
+
 
 # ---------------------------------------------------------------------------
 # §7.5 family tool action param has enum in inputSchema
@@ -188,6 +203,29 @@ def test_resolve_settings_validates_overrides() -> None:
 
 
 # ---------------------------------------------------------------------------
+# §2.3 transport-gated local file uploads
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_allow_local_file_uploads_gated_by_transport() -> None:
+    """Local file uploads default off on network transports unless opted in.
+
+    Over network transports (streamable-http) uploads are unsafe by default, so
+    the resolver returns False when the operator did not explicitly opt in. An
+    explicit allow_local_file_uploads=True survives, and stdio (trusted local
+    operator) keeps the default of True.
+    """
+    from mcp_litellm.server import _resolve_allow_local_file_uploads
+
+    # Network transport, no explicit opt-in -> gated off.
+    assert _resolve_allow_local_file_uploads(Settings(transport="streamable-http")) is False
+    # Network transport, explicit opt-in -> honoured.
+    assert _resolve_allow_local_file_uploads(Settings(transport="streamable-http", allow_local_file_uploads=True)) is True
+    # stdio (trusted local) -> default True preserved.
+    assert _resolve_allow_local_file_uploads(Settings(transport="stdio")) is True
+
+
+# ---------------------------------------------------------------------------
 # §7.2 main() with unknown profile exits cleanly (SystemExit, not ValueError)
 # ---------------------------------------------------------------------------
 
@@ -201,7 +239,7 @@ def test_main_unknown_profile_exits_cleanly(monkeypatch: pytest.MonkeyPatch) -> 
     with pytest.raises(SystemExit) as exc_info:
         server_module.main()
 
-    assert exc_info.value.code != 0
+    assert exc_info.value.code == 2
 
 
 # ---------------------------------------------------------------------------

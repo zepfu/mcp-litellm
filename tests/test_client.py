@@ -122,7 +122,7 @@ async def test_reuses_single_async_client(monkeypatch: pytest.MonkeyPatch) -> No
         await client.request("GET", "/health")
         await client.request("GET", "/test")
 
-    assert instantiation_count <= 1
+    assert instantiation_count == 1
 
 
 # ---------------------------------------------------------------------------
