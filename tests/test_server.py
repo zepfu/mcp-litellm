@@ -179,7 +179,7 @@ def test_resolve_settings_validates_overrides() -> None:
     """_resolve_settings with port=70000 must raise ValidationError (not silently accept)."""
     from pydantic import ValidationError
 
-    from mcp_litellm.server import _resolve_settings  # type: ignore[attr-defined]
+    from mcp_litellm.server import _resolve_settings
 
     base = Settings()
     args = argparse.Namespace(port=70000, host=None, transport=None, tool_profile=None, enable_tool=None, disable_tool=None)
@@ -257,7 +257,7 @@ def test_tool_spec_actions_is_read_only_mapping() -> None:
 
     tool_spec = TOOL_SPECS[0]
     with pytest.raises(TypeError):
-        tool_spec.actions["__injected__"] = None  # type: ignore[assignment]
+        tool_spec.actions["__injected__"] = None  # type: ignore[index]
 
 
 # ---------------------------------------------------------------------------

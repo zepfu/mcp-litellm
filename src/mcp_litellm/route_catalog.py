@@ -1,4 +1,12 @@
-"""LiteLLM route catalog and classification helpers."""
+"""LiteLLM route catalog and classification helpers.
+
+The ``generic_native`` classification is intentionally default-allow: any
+LiteLLM-native route not matched by a typed prefix/exact path, alias rule,
+pass-through prefix, or protocol rule falls through to ``generic_native`` so
+that ``litellm_native_request`` can reach it. This default-allow behavior is
+guarded by ``test_generic_native_baseline``, which pins the count so that any
+spec refresh adding native routes surfaces for conscious review.
+"""
 
 from __future__ import annotations
 
@@ -22,10 +30,45 @@ RouteClassification = Literal[
     "excluded_protocol",
 ]
 
+HTTP_METHODS = frozenset(
+    {
+        "get",
+        "put",
+        "post",
+        "delete",
+        "options",
+        "head",
+        "patch",
+        "trace",
+    }
+)
+
+TYPED_EXACT_PATHS: frozenset[str] = frozenset(
+    {
+        "/provider/budgets",
+        "/cost/estimate",
+        "/usage/ai/chat",
+        "/add/allowed_ip",
+        "/delete/allowed_ip",
+        "/agent/daily/activity",
+        "/test",
+        "/active/callbacks",
+        "/settings",
+        "/debug/asyncio-tasks",
+        "/public/mcp_hub",
+        "/public/endpoints",
+        "/public/litellm_model_cost_map",
+        "/sso/readiness",
+        "/upload/logo",
+        "/in_product_nudges",
+        "/search",
+        "/search_tools",
+    }
+)
+
 TYPED_PATH_PREFIXES = (
     "/models",
     "/model/",
-    "/model/info",
     "/key/",
     "/team/",
     "/user/",
@@ -35,18 +78,8 @@ TYPED_PATH_PREFIXES = (
     "/budget/",
     "/spend/",
     "/global/spend/",
-    "/provider/budgets",
     "/tag/",
-    "/cost/estimate",
-    "/usage/ai/chat",
-    "/add/allowed_ip",
-    "/delete/allowed_ip",
-    "/agent/daily/activity",
-    "/test",
     "/health",
-    "/active/callbacks",
-    "/settings",
-    "/debug/asyncio-tasks",
     "/cache/",
     "/callbacks/",
     "/router/",
@@ -57,13 +90,12 @@ TYPED_PATH_PREFIXES = (
     "/policies",
     "/policy/",
     "/guardrails",
-    "/search_tools",
-    "/search",
+    "/search_tools/",
+    "/search/",
     "/rag/",
     "/v1/tool/",
     "/v1/mcp/",
     "/mcp-rest/",
-    "/public/mcp_hub",
     "/config/",
     "/config_overrides/",
     "/cloudzero/",
@@ -74,14 +106,9 @@ TYPED_PATH_PREFIXES = (
     "/model_group/",
     "/public/model_hub",
     "/public/providers",
-    "/public/endpoints",
-    "/public/litellm_model_cost_map",
     "/get/",
     "/update/",
     "/email/event_settings",
-    "/sso/readiness",
-    "/upload/logo",
-    "/in_product_nudges",
 )
 
 PASS_THROUGH_PATH_PREFIXES = (
@@ -121,6 +148,23 @@ WEBSOCKET_PROTOCOL_PATHS = {
     ("GET", "/realtime"),
 }
 
+DEPLOYMENT_ALIASES = {
+    "/openai/deployments/{model}/chat/completions": "/chat/completions",
+    "/openai/deployments/{model}/completions": "/completions",
+    "/openai/deployments/{model}/embeddings": "/embeddings",
+    "/openai/deployments/{model}/images/generations": "/images/generations",
+    "/openai/deployments/{model}/images/edits": "/images/edits",
+    "/engines/{model}/chat/completions": "/chat/completions",
+    "/engines/{model}/completions": "/completions",
+    "/engines/{model}/embeddings": "/embeddings",
+    "/{provider}/v1/files": "/files",
+    "/{provider}/v1/files/{file_id}": "/files/{file_id}",
+    "/{provider}/v1/files/{file_id}/content": "/files/{file_id}/content",
+    "/{provider}/v1/batches": "/batches",
+    "/{provider}/v1/batches/{batch_id}": "/batches/{batch_id}",
+    "/{provider}/v1/batches/{batch_id}/cancel": "/batches/{batch_id}/cancel",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class RouteInfo:
@@ -141,7 +185,7 @@ def route_key(method: str, path: str) -> str:
 
 
 def _matches_prefix(path: str, prefixes: Iterable[str]) -> bool:
-    return any(path == prefix or path.startswith(prefix) for prefix in prefixes)
+    return any(path.startswith(prefix) for prefix in prefixes)
 
 
 def _is_protocol_path(method: str, path: str) -> bool:
@@ -172,23 +216,7 @@ def _is_alias_path(path: str, all_paths: set[str]) -> bool:
         if canonical_path in all_paths:
             return True
 
-    deployment_aliases = {
-        "/openai/deployments/{model}/chat/completions": "/chat/completions",
-        "/openai/deployments/{model}/completions": "/completions",
-        "/openai/deployments/{model}/embeddings": "/embeddings",
-        "/openai/deployments/{model}/images/generations": "/images/generations",
-        "/openai/deployments/{model}/images/edits": "/images/edits",
-        "/engines/{model}/chat/completions": "/chat/completions",
-        "/engines/{model}/completions": "/completions",
-        "/engines/{model}/embeddings": "/embeddings",
-        "/{provider}/v1/files": "/files",
-        "/{provider}/v1/files/{file_id}": "/files/{file_id}",
-        "/{provider}/v1/files/{file_id}/content": "/files/{file_id}/content",
-        "/{provider}/v1/batches": "/batches",
-        "/{provider}/v1/batches/{batch_id}": "/batches/{batch_id}",
-        "/{provider}/v1/batches/{batch_id}/cancel": "/batches/{batch_id}/cancel",
-    }
-    deployment_canonical_path = deployment_aliases.get(path)
+    deployment_canonical_path = DEPLOYMENT_ALIASES.get(path)
     return bool(deployment_canonical_path and deployment_canonical_path in all_paths)
 
 
@@ -204,7 +232,7 @@ def _classify_route(
         return "alias"
     if _is_pass_through_path(path):
         return "excluded_pass_through"
-    if _matches_prefix(path, TYPED_PATH_PREFIXES):
+    if path in TYPED_EXACT_PATHS or _matches_prefix(path, TYPED_PATH_PREFIXES):
         return "typed"
     return "generic_native"
 
@@ -224,6 +252,8 @@ def _build_route_catalog_cached(resolved_path: str) -> dict[str, RouteInfo]:
 
     for route_path, operations in spec["paths"].items():
         for method, operation in operations.items():
+            if method.lower() not in HTTP_METHODS:
+                continue
             operation_method = method.upper()
             tags = tuple(operation.get("tags", ()))
             key = route_key(operation_method, route_path)
@@ -242,7 +272,7 @@ def _build_route_catalog_cached(resolved_path: str) -> dict[str, RouteInfo]:
 
 def build_route_catalog(path: Path | None = None) -> dict[str, RouteInfo]:
     """Build the normalized route catalog from the vendored LiteLLM spec."""
-    resolved_path = (path or get_settings().resolved_openapi_path).resolve()
+    resolved_path = path or get_settings().resolved_openapi_path
     return _build_route_catalog_cached(str(resolved_path))
 
 
@@ -256,7 +286,7 @@ def get_route(
     resolved_catalog = catalog or build_route_catalog(path)
     try:
         return resolved_catalog[route_key_value]
-    except KeyError as exc:  # pragma: no cover - thin wrapper
+    except KeyError as exc:
         raise UnknownLiteLLMRouteError(route_key_value) from exc
 
 

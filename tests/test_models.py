@@ -82,7 +82,7 @@ def test_path_params_still_coerce_int() -> None:
 
 def test_litellm_response_typeddict_importable() -> None:
     """LiteLLMResponse must be importable from mcp_litellm.models and be a TypedDict."""
-    from mcp_litellm.models import LiteLLMResponse  # type: ignore[attr-defined]
+    from mcp_litellm.models import LiteLLMResponse
 
     # TypedDicts have __annotations__ and are not plain dicts at the class level
     assert hasattr(LiteLLMResponse, "__annotations__")

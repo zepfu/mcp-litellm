@@ -4,15 +4,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+import typing
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Any
 
+import pydantic
 from mcp.server import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import Field
 
+from mcp_litellm._parsing import split_csv
 from mcp_litellm.client import LiteLLMClient
 from mcp_litellm.config import Settings, get_settings
-from mcp_litellm.errors import InvalidToolSpecError
-from mcp_litellm.models import JsonValue, MultipartFileSpec, RequestOptions
+from mcp_litellm.errors import InvalidToolSpecError, McpLiteLLMError
+from mcp_litellm.models import JsonValue, LiteLLMResponse, MultipartFileSpec, RequestOptions
 from mcp_litellm.route_catalog import (
     RouteClassification,
     build_route_catalog,
@@ -28,7 +35,7 @@ from mcp_litellm.tool_definitions import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import AsyncIterator, Callable, Mapping
 
     from mcp_litellm.route_catalog import RouteInfo
 
@@ -100,21 +107,26 @@ def _make_family_tool(
         query: QueryParams = None,
         body: RequestBody = None,
         multipart_files: MultipartFiles = None,
-    ) -> dict[str, Any]:
-        options = _build_request_options(
-            path_params=path_params,
-            query=query,
-            body=body,
-            multipart_files=multipart_files,
-        )
-        return await service.execute_action(
-            action,
-            tool_spec.actions,
-            options=options,
-        )
+    ) -> LiteLLMResponse:
+        try:
+            options = _build_request_options(
+                path_params=path_params,
+                query=query,
+                body=body,
+                multipart_files=multipart_files,
+            )
+            return await service.execute_action(
+                action,
+                tool_spec.actions,
+                options=options,
+            )
+        except (McpLiteLLMError, pydantic.ValidationError) as exc:
+            raise ToolError(str(exc)) from exc
 
     tool.__name__ = tool_spec.name
-    tool.__doc__ = tool_spec.description
+    # A Literal of the sorted action names surfaces as an `enum` in the
+    # generated MCP input schema (verified against FastMCP schema generation).
+    tool.__annotations__["action"] = typing.Literal.__getitem__(tuple(sorted(tool_spec.actions)))
     return tool
 
 
@@ -136,7 +148,7 @@ def _parse_name_args(values: list[str] | None) -> tuple[str, ...] | None:
         return None
     parsed_values: list[str] = []
     for value in values:
-        parsed_values.extend(item.strip() for item in value.split(",") if item.strip())
+        parsed_values.extend(split_csv(value))
     return tuple(parsed_values)
 
 
@@ -153,20 +165,27 @@ def _build_server_instructions(active_tool_names: set[str]) -> str:
     return instructions
 
 
+@dataclass(frozen=True, slots=True)
+class _ActiveToolset:
+    """Resolved active-tool selection shared across server wiring helpers."""
+
+    active_tool_names: frozenset[str]
+    active_family_tool_specs: tuple[ToolSpec, ...]
+    standalone_tool_names: tuple[str, ...]
+
+
 def _build_active_toolset_payload(
     settings: Settings,
     *,
-    active_tool_names: set[str],
-    active_family_tool_specs: tuple[ToolSpec, ...],
-    standalone_tool_names: list[str],
+    toolset: _ActiveToolset,
 ) -> dict[str, Any]:
     return {
         "tool_profiles": list(settings.tool_profiles),
         "enable_tools": list(settings.enable_tools),
         "disable_tools": list(settings.disable_tools),
-        "active_tools": sorted(active_tool_names),
-        "family_tools": [tool_spec.name for tool_spec in active_family_tool_specs],
-        "standalone_tools": standalone_tool_names,
+        "active_tools": sorted(toolset.active_tool_names),
+        "family_tools": [tool_spec.name for tool_spec in toolset.active_family_tool_specs],
+        "standalone_tools": list(toolset.standalone_tool_names),
         "available_profiles": {
             profile.name: {
                 "description": profile.description,
@@ -175,6 +194,23 @@ def _build_active_toolset_payload(
             for profile in list_tool_profiles()
         },
     }
+
+
+def _compute_denied_route_keys(active_tool_names: set[str]) -> set[str]:
+    """Route keys owned only by disabled family tools (escape-hatch denylist).
+
+    A typed route owned by both a disabled and a still-active family is NOT
+    denied: the active family legitimately exposes it.
+    """
+    disabled_route_keys: set[str] = set()
+    active_route_keys: set[str] = set()
+    for tool_spec in TOOL_SPECS:
+        route_keys = {action_spec.route_key for action_spec in tool_spec.actions.values()}
+        if tool_spec.name in active_tool_names:
+            active_route_keys |= route_keys
+        else:
+            disabled_route_keys |= route_keys
+    return disabled_route_keys - active_route_keys
 
 
 def _register_list_routes_tool(server: FastMCP, *, catalog: Mapping[str, RouteInfo]) -> None:
@@ -223,7 +259,12 @@ def _register_list_routes_tool(server: FastMCP, *, catalog: Mapping[str, RouteIn
         }
 
 
-def _register_native_request_tool(server: FastMCP, service: LiteLLMToolService) -> None:
+def _register_native_request_tool(
+    server: FastMCP,
+    service: LiteLLMToolService,
+    *,
+    denied_route_keys: set[str],
+) -> None:
     @server.tool(
         name="litellm_native_request",
         description=(
@@ -241,18 +282,22 @@ def _register_native_request_tool(server: FastMCP, service: LiteLLMToolService) 
         query: QueryParams = None,
         body: RequestBody = None,
         multipart_files: MultipartFiles = None,
-    ) -> dict[str, Any]:
-        options = _build_request_options(
-            path_params=path_params,
-            query=query,
-            body=body,
-            multipart_files=multipart_files,
-        )
-        return await service.execute_route_key(
-            route_key,
-            allowed_classifications={"typed", "generic_native"},
-            options=options,
-        )
+    ) -> LiteLLMResponse:
+        try:
+            options = _build_request_options(
+                path_params=path_params,
+                query=query,
+                body=body,
+                multipart_files=multipart_files,
+            )
+            return await service.execute_route_key(
+                route_key,
+                allowed_classifications={"typed", "generic_native"},
+                denied_route_keys=denied_route_keys,
+                options=options,
+            )
+        except (McpLiteLLMError, pydantic.ValidationError) as exc:
+            raise ToolError(str(exc)) from exc
 
 
 def _register_route_details_tool(server: FastMCP, *, catalog: Mapping[str, RouteInfo]) -> None:
@@ -267,7 +312,10 @@ def _register_route_details_tool(server: FastMCP, *, catalog: Mapping[str, Route
             Field(description="Exact route key in the form 'METHOD /path'."),
         ],
     ) -> dict[str, Any]:
-        route = get_route(route_key, catalog=catalog)
+        try:
+            route = get_route(route_key, catalog=catalog)
+        except McpLiteLLMError as exc:
+            raise ToolError(str(exc)) from exc
         return {
             "route_key": route.key,
             "method": route.method,
@@ -279,9 +327,71 @@ def _register_route_details_tool(server: FastMCP, *, catalog: Mapping[str, Route
         }
 
 
+def _register_resources(
+    server: FastMCP,
+    *,
+    catalog: Mapping[str, RouteInfo],
+    settings: Settings,
+    toolset: _ActiveToolset,
+) -> None:
+    @server.resource(
+        "litellm://routes/typed",
+        name="LiteLLM typed routes",
+        description="Typed LiteLLM-native routes promoted into first-class MCP tools.",
+        mime_type="text/markdown",
+    )
+    def typed_routes_resource() -> str:
+        return _routes_as_markdown({"typed"}, catalog=catalog)
+
+    @server.resource(
+        "litellm://routes/native",
+        name="LiteLLM native routes",
+        description="All callable LiteLLM-native routes, excluding pass-through and protocol-only endpoints.",
+        mime_type="text/markdown",
+    )
+    def native_routes_resource() -> str:
+        return _routes_as_markdown({"typed", "generic_native"}, catalog=catalog)
+
+    @server.resource(
+        "litellm://tools/actions",
+        name="LiteLLM tool actions",
+        description="Curated family-tool action catalog for the currently enabled toolset.",
+        mime_type="application/json",
+    )
+    def tool_actions_resource() -> str:
+        payload = {
+            tool_spec.name: {
+                "description": tool_spec.description,
+                "actions": sorted(tool_spec.actions),
+            }
+            for tool_spec in toolset.active_family_tool_specs
+        }
+        return json.dumps(payload, indent=2, sort_keys=True)
+
+    @server.resource(
+        "litellm://tools/active",
+        name="LiteLLM active toolset",
+        description="Resolved tool profiles and the active MCP tools exposed by this server instance.",
+        mime_type="application/json",
+    )
+    def active_toolset_resource() -> str:
+        payload = _build_active_toolset_payload(settings, toolset=toolset)
+        return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def _resolve_allow_local_file_uploads(settings: Settings) -> bool:
+    # Local file uploads are only safe over stdio (a trusted local operator).
+    # Over network transports, default to disabled unless the operator opted in.
+    if settings.transport != "stdio" and "allow_local_file_uploads" not in settings.model_fields_set:
+        return False
+    return settings.allow_local_file_uploads
+
+
 def build_server(settings: Settings | None = None) -> FastMCP:
     """Build and return the configured FastMCP server instance."""
     resolved_settings = settings or get_settings()
+    if _resolve_allow_local_file_uploads(resolved_settings) != resolved_settings.allow_local_file_uploads:
+        resolved_settings = resolved_settings.model_copy(update={"allow_local_file_uploads": False})
     route_catalog = build_route_catalog(resolved_settings.resolved_openapi_path)
     _validate_tool_specs(route_catalog)
 
@@ -296,7 +406,20 @@ def build_server(settings: Settings | None = None) -> FastMCP:
     )
     active_family_tool_specs = tuple(tool_spec for tool_spec in TOOL_SPECS if tool_spec.name in active_tool_names)
     active_family_tool_names = {tool_spec.name for tool_spec in active_family_tool_specs}
-    standalone_tool_names = sorted(tool_name for tool_name in active_tool_names if tool_name not in active_family_tool_names)
+    standalone_tool_names = tuple(sorted(name for name in active_tool_names if name not in active_family_tool_names))
+    denied_route_keys = _compute_denied_route_keys(active_tool_names)
+    toolset = _ActiveToolset(
+        active_tool_names=frozenset(active_tool_names),
+        active_family_tool_specs=active_family_tool_specs,
+        standalone_tool_names=standalone_tool_names,
+    )
+
+    @asynccontextmanager
+    async def lifespan(_server: FastMCP) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            await client.aclose()
 
     server = FastMCP(
         name="mcp-litellm",
@@ -307,56 +430,18 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         sse_path=resolved_settings.sse_path,
         message_path=resolved_settings.message_path,
         streamable_http_path=resolved_settings.streamable_http_path,
+        lifespan=lifespan,
     )
+    # Expose the lifespan factory on the instance so shutdown can be exercised
+    # directly (FastMCP only stores it internally on settings otherwise).
+    server.lifespan = lifespan  # type: ignore[attr-defined]
 
-    @server.resource(
-        "litellm://routes/typed",
-        name="LiteLLM typed routes",
-        description="Typed LiteLLM-native routes promoted into first-class MCP tools.",
-        mime_type="text/markdown",
+    _register_resources(
+        server,
+        catalog=route_catalog,
+        settings=resolved_settings,
+        toolset=toolset,
     )
-    def typed_routes_resource() -> str:
-        return _routes_as_markdown({"typed"}, catalog=route_catalog)
-
-    @server.resource(
-        "litellm://routes/native",
-        name="LiteLLM native routes",
-        description="All callable LiteLLM-native routes, excluding pass-through and protocol-only endpoints.",
-        mime_type="text/markdown",
-    )
-    def native_routes_resource() -> str:
-        return _routes_as_markdown({"typed", "generic_native"}, catalog=route_catalog)
-
-    @server.resource(
-        "litellm://tools/actions",
-        name="LiteLLM tool actions",
-        description="Curated family-tool action catalog for the currently enabled toolset.",
-        mime_type="application/json",
-    )
-    def tool_actions_resource() -> str:
-        payload = {
-            tool_spec.name: {
-                "description": tool_spec.description,
-                "actions": sorted(tool_spec.actions),
-            }
-            for tool_spec in active_family_tool_specs
-        }
-        return json.dumps(payload, indent=2, sort_keys=True)
-
-    @server.resource(
-        "litellm://tools/active",
-        name="LiteLLM active toolset",
-        description="Resolved tool profiles and the active MCP tools exposed by this server instance.",
-        mime_type="application/json",
-    )
-    def active_toolset_resource() -> str:
-        payload = _build_active_toolset_payload(
-            resolved_settings,
-            active_tool_names=active_tool_names,
-            active_family_tool_specs=active_family_tool_specs,
-            standalone_tool_names=standalone_tool_names,
-        )
-        return json.dumps(payload, indent=2, sort_keys=True)
 
     if "litellm_list_routes" in active_tool_names:
         _register_list_routes_tool(server, catalog=route_catalog)
@@ -370,7 +455,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         )
 
     if "litellm_native_request" in active_tool_names:
-        _register_native_request_tool(server, service)
+        _register_native_request_tool(server, service, denied_route_keys=denied_route_keys)
 
     if "litellm_route_details" in active_tool_names:
         _register_route_details_tool(server, catalog=route_catalog)
@@ -417,10 +502,8 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    """Run the LiteLLM MCP server using CLI arguments plus environment defaults."""
-    base_settings = get_settings()
-    args = _parse_args()
+def _resolve_settings(base: Settings, args: argparse.Namespace) -> Settings:
+    """Apply validated CLI overrides on top of the base settings."""
     overrides: dict[str, Any] = {}
     if args.transport is not None:
         overrides["transport"] = args.transport
@@ -437,7 +520,17 @@ def main() -> None:
     parsed_disable_tools = _parse_name_args(args.disable_tool)
     if parsed_disable_tools is not None:
         overrides["disable_tools"] = parsed_disable_tools
+    return Settings.model_validate({**base.model_dump(), **overrides})
 
-    settings = base_settings.model_copy(update=overrides)
-    server = build_server(settings)
+
+def main() -> None:
+    """Run the LiteLLM MCP server using CLI arguments plus environment defaults."""
+    base_settings = get_settings()
+    args = _parse_args()
+    settings = _resolve_settings(base_settings, args)
+    try:
+        server = build_server(settings)
+    except ValueError as exc:
+        print(f"mcp-litellm: {exc}", file=sys.stderr)  # noqa: T201
+        sys.exit(2)
     server.run(transport=settings.transport)

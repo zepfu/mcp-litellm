@@ -34,7 +34,7 @@ def test_version_is_bumped() -> None:
 
     import mcp_litellm
 
-    assert mcp_litellm.__version__ == "0.2.0"  # type: ignore[attr-defined]
+    assert mcp_litellm.__version__ == "0.2.0"
 
     # Locate pyproject.toml relative to this file (tests/smoke/ -> repo root)
     pyproject_path = Path(__file__).parents[2] / "pyproject.toml"
@@ -42,11 +42,11 @@ def test_version_is_bumped() -> None:
         pyproject = tomllib.load(f)
 
     pyproject_version = pyproject["project"]["version"]
-    assert mcp_litellm.__version__ == pyproject_version  # type: ignore[attr-defined]
+    assert mcp_litellm.__version__ == pyproject_version
 
 
 def test_errors_module_imports() -> None:
     """McpLiteLLMError must be importable from mcp_litellm.errors."""
-    from mcp_litellm.errors import McpLiteLLMError  # type: ignore[attr-defined]
+    from mcp_litellm.errors import McpLiteLLMError
 
     assert issubclass(McpLiteLLMError, Exception)

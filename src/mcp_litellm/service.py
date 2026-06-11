@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 from mcp_litellm.errors import (
+    InvalidPathParameterError,
     MissingPathParametersError,
     RouteNotAllowedError,
     UnknownToolActionError,
@@ -19,13 +20,20 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from mcp_litellm.client import LiteLLMClient
+    from mcp_litellm.models import LiteLLMResponse
+    from mcp_litellm.route_catalog import RouteClassification
 
 PATH_PARAM_PATTERN = re.compile(r"{([^}]+)}")
 
 
 @dataclass(frozen=True, slots=True)
 class ActionSpec:
-    """A named tool action mapped to a specific LiteLLM route key."""
+    """A named tool action mapped to a specific LiteLLM route key.
+
+    Deliberate extension point: actions are intentionally modeled as their own
+    dataclass so per-action metadata (scopes, defaults) can be added later
+    without reshaping the family-tool surface.
+    """
 
     route_key: str
 
@@ -50,12 +58,20 @@ class LiteLLMToolService:
         missing_params = sorted(required_params - set(params))
         if missing_params:
             raise MissingPathParametersError(missing_params)
+        surplus_keys = sorted(set(params) - required_params)
+        if surplus_keys:
+            detail = f"Unexpected path parameter(s) not in the route template: {', '.join(surplus_keys)}."
+            raise InvalidPathParameterError(detail)
         rendered_path = path_template
         for key in required_params:
-            rendered_path = rendered_path.replace(f"{{{key}}}", quote(str(params[key]), safe=""))
+            raw_value = str(params[key])
+            if not raw_value.strip():
+                detail = f"Path parameter {key!r} must not be empty or whitespace-only."
+                raise InvalidPathParameterError(detail)
+            rendered_path = rendered_path.replace(f"{{{key}}}", quote(raw_value, safe=""))
         return rendered_path
 
-    async def execute_route(self, route: RouteInfo, options: RequestOptions | None = None) -> dict[str, Any]:
+    async def execute_route(self, route: RouteInfo, options: RequestOptions | None = None) -> LiteLLMResponse:
         """Execute a single LiteLLM route using normalized request options."""
         resolved_options = options or RequestOptions()
         rendered_path = self._render_path(route.path, resolved_options.path_params)
@@ -75,11 +91,14 @@ class LiteLLMToolService:
         self,
         route_key: str,
         *,
-        allowed_classifications: set[str],
+        allowed_classifications: set[RouteClassification],
+        denied_route_keys: set[str] | None = None,
         options: RequestOptions | None = None,
-    ) -> dict[str, Any]:
-        """Execute a route key if its classification is within the allowed set."""
+    ) -> LiteLLMResponse:
+        """Execute a route key if it is allowed and not explicitly denied."""
         route = get_route(route_key, catalog=self._route_catalog)
+        if denied_route_keys and route.key in denied_route_keys:
+            raise RouteNotAllowedError(route.key, route.classification)
         if route.classification not in allowed_classifications:
             raise RouteNotAllowedError(route.key, route.classification)
         return await self.execute_route(route, options)
@@ -87,10 +106,10 @@ class LiteLLMToolService:
     async def execute_action(
         self,
         action: str,
-        actions: dict[str, ActionSpec],
+        actions: Mapping[str, ActionSpec],
         *,
         options: RequestOptions | None = None,
-    ) -> dict[str, Any]:
+    ) -> LiteLLMResponse:
         """Execute a named family-tool action against its mapped LiteLLM route."""
         try:
             action_spec = actions[action]
