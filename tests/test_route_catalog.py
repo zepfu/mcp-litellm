@@ -88,7 +88,7 @@ def test_no_typed_prefix_shadows_another() -> None:
     Also: no TYPED_EXACT_PATHS entry starts with any prefix in TYPED_PATH_PREFIXES.
     These are new module-level names the engineer adds in the refactor.
     """
-    from mcp_litellm.route_catalog import TYPED_EXACT_PATHS, TYPED_PATH_PREFIXES  # type: ignore[attr-defined]
+    from mcp_litellm.route_catalog import TYPED_EXACT_PATHS, TYPED_PATH_PREFIXES
 
     # Validate no prefix is a prefix of another (shadowing)
     prefix_list = list(TYPED_PATH_PREFIXES)

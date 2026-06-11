@@ -9,7 +9,7 @@ from __future__ import annotations
 
 def test_all_errors_subclass_common_base() -> None:
     """Every custom error class must subclass McpLiteLLMError."""
-    from mcp_litellm.errors import (  # type: ignore[attr-defined]
+    from mcp_litellm.errors import (
         InvalidMultipartBodyError,
         InvalidPathParameterError,
         InvalidToolSpecError,
@@ -76,14 +76,14 @@ def test_errors_retain_structured_fields() -> None:
     )
 
     missing = MissingPathParametersError(["a", "b"])
-    assert missing.missing_params == ["a", "b"]  # type: ignore[attr-defined]
+    assert missing.missing_params == ["a", "b"]
 
     route_denied = RouteNotAllowedError("GET /x", "alias")
-    assert route_denied.route_key == "GET /x"  # type: ignore[attr-defined]
-    assert route_denied.classification == "alias"  # type: ignore[attr-defined]
+    assert route_denied.route_key == "GET /x"
+    assert route_denied.classification == "alias"
 
     unknown_action = UnknownToolActionError("z", ["a"])
-    assert unknown_action.action == "z"  # type: ignore[attr-defined]
+    assert unknown_action.action == "z"
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ def test_errors_retain_structured_fields() -> None:
 
 def test_multipart_body_error_uses_shared_constant() -> None:
     """str(InvalidMultipartBodyError()) must equal MULTIPART_BODY_ERROR constant."""
-    from mcp_litellm.errors import MULTIPART_BODY_ERROR, InvalidMultipartBodyError  # type: ignore[attr-defined]
+    from mcp_litellm.errors import MULTIPART_BODY_ERROR, InvalidMultipartBodyError
 
     err = InvalidMultipartBodyError()
     assert str(err) == MULTIPART_BODY_ERROR

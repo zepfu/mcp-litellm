@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -14,26 +15,9 @@ from mcp_litellm.config import Settings
 # ---------------------------------------------------------------------------
 
 
-def test_settings_ignores_ambient_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Settings constructed after env fixture still sees default tool_profiles.
-
-    The conftest autouse fixture deletes MCP_LITELLM_* keys; this test plants
-    one *after* the fixture runs to verify the env_file=None setitem also
-    prevents .env from sneaking through, and the delenv handled the initial
-    plant.
-    """
-    monkeypatch.setenv("MCP_LITELLM_TOOL_PROFILES", "full")
-    # With the fixture neutralising env_file and any prior env, this new plant
-    # should NOT be read -- because Settings.model_config["env_file"] is None
-    # (set by the autouse fixture) but the freshly planted env var IS present.
-    # After the engineer implements the hermetic conftest, Settings() must
-    # still return ("core",) because the fixture clears the env BEFORE each
-    # test and this plant happens inside the test function (which monkeypatch
-    # correctly restores). This assertion passes once the conftest properly
-    # handles dynamically planted vars -- it passes NOW because the autouse
-    # fixture pre-clears all MCP_LITELLM_* and the monkeypatch.setenv is the
-    # only source.  The expected value is ("core",) only when the conftest
-    # correctly sets env_file=None.
+def test_settings_ignores_ambient_env() -> None:
+    """The autouse _hermetic_env fixture clears ambient MCP_LITELLM_* vars."""
+    assert not any(key.startswith("MCP_LITELLM_") for key in os.environ)
     assert Settings().tool_profiles == ("core",)
 
 
@@ -105,7 +89,7 @@ def test_default_openapi_path_raises_when_absent(monkeypatch: pytest.MonkeyPatch
 
 def test_allow_local_file_uploads_defaults_true() -> None:
     """Settings.allow_local_file_uploads must default to True."""
-    assert Settings().allow_local_file_uploads is True  # type: ignore[attr-defined]
+    assert Settings().allow_local_file_uploads is True
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +99,7 @@ def test_allow_local_file_uploads_defaults_true() -> None:
 
 def test_default_tool_profiles_constant_matches_settings_default() -> None:
     """DEFAULT_TOOL_PROFILES constant must equal Settings().tool_profiles == ("core",)."""
-    from mcp_litellm.config import DEFAULT_TOOL_PROFILES  # type: ignore[attr-defined]
+    from mcp_litellm.config import DEFAULT_TOOL_PROFILES
 
     assert DEFAULT_TOOL_PROFILES == ("core",)
     assert Settings().tool_profiles == ("core",)

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from mcp_litellm.config import DEFAULT_TOOL_PROFILES
 from mcp_litellm.route_catalog import route_key
 from mcp_litellm.service import ActionSpec
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,7 +20,7 @@ class ToolSpec:
 
     name: str
     description: str
-    actions: dict[str, ActionSpec]
+    actions: Mapping[str, ActionSpec]
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,16 +36,17 @@ def _action(method: str, path: str) -> ActionSpec:
     return ActionSpec(route_key=route_key(method, path))
 
 
+def _spec(name: str, prose: str, actions: dict[str, ActionSpec]) -> ToolSpec:
+    """Build a ToolSpec with a generated action list and read-only actions."""
+    description = f"{prose} Actions: {', '.join(sorted(actions))}."
+    return ToolSpec(name=name, description=description, actions=MappingProxyType(dict(actions)))
+
+
 TOOL_SPECS: tuple[ToolSpec, ...] = (
-    ToolSpec(
-        name="litellm_models_catalog",
-        description=(
-            "Inspect LiteLLM model discovery and public catalog endpoints. "
-            "Actions: list_models, get_model, model_info, public_model_hub, "
-            "public_model_hub_info, public_cost_map, public_providers, "
-            "public_provider_fields, public_endpoints."
-        ),
-        actions={
+    _spec(
+        "litellm_models_catalog",
+        "Inspect LiteLLM model discovery and public catalog endpoints.",
+        {
             "list_models": _action("GET", "/models"),
             "get_model": _action("GET", "/models/{model_id}"),
             "model_info": _action("GET", "/model/info"),
@@ -55,15 +58,10 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "public_endpoints": _action("GET", "/public/endpoints"),
         },
     ),
-    ToolSpec(
-        name="litellm_models_admin",
-        description=(
-            "Manage LiteLLM models and access groups. Actions: create_model, update_model, "
-            "patch_model, delete_model, create_access_group, list_access_groups, "
-            "get_access_group, update_access_group, delete_access_group, model_group_info, "
-            "model_group_make_public."
-        ),
-        actions={
+    _spec(
+        "litellm_models_admin",
+        "Manage LiteLLM models and access groups.",
+        {
             "create_model": _action("POST", "/model/new"),
             "update_model": _action("POST", "/model/update"),
             "patch_model": _action("PATCH", "/model/{model_id}/update"),
@@ -77,15 +75,10 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "model_group_make_public": _action("POST", "/model_group/make_public"),
         },
     ),
-    ToolSpec(
-        name="litellm_keys",
-        description=(
-            "Manage LiteLLM virtual keys. Actions: create_key, create_service_account_key, "
-            "update_key, bulk_update_keys, delete_key, get_key, list_keys, list_key_aliases, "
-            "regenerate_key, regenerate_key_by_value, reset_key_spend, block_key, unblock_key, "
-            "key_health."
-        ),
-        actions={
+    _spec(
+        "litellm_keys",
+        "Manage LiteLLM virtual keys.",
+        {
             "create_key": _action("POST", "/key/generate"),
             "create_service_account_key": _action("POST", "/key/service-account/generate"),
             "update_key": _action("POST", "/key/update"),
@@ -102,16 +95,10 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "key_health": _action("POST", "/key/health"),
         },
     ),
-    ToolSpec(
-        name="litellm_teams",
-        description=(
-            "Manage LiteLLM teams, memberships, team model access, and callbacks. "
-            "Actions: create_team, update_team, delete_team, get_team, list_teams, "
-            "list_available_teams, add_member, update_member, delete_member, bulk_add_members, "
-            "add_model, delete_model, list_permissions, update_permissions, daily_activity, "
-            "get_callbacks, add_callbacks, disable_logging."
-        ),
-        actions={
+    _spec(
+        "litellm_teams",
+        "Manage LiteLLM teams, memberships, team model access, and callbacks.",
+        {
             "create_team": _action("POST", "/team/new"),
             "update_team": _action("POST", "/team/update"),
             "delete_team": _action("POST", "/team/delete"),
@@ -132,20 +119,10 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "disable_logging": _action("POST", "/team/{team_id}/disable_logging"),
         },
     ),
-    ToolSpec(
-        name="litellm_identities",
-        description=(
-            "Manage users, organizations, projects, and customers. Actions include "
-            "create_user, get_user, update_user, bulk_update_users, list_users, delete_user, "
-            "user_daily_activity, user_daily_activity_aggregated, available_users, "
-            "create_organization, update_organization, delete_organization, list_organizations, "
-            "get_organization, organization_daily_activity, organization_add_member, "
-            "organization_update_member, organization_delete_member, create_project, "
-            "update_project, delete_project, get_project, list_projects, create_customer, "
-            "get_customer, update_customer, delete_customer, list_customers, block_customer, "
-            "unblock_customer, customer_daily_activity."
-        ),
-        actions={
+    _spec(
+        "litellm_identities",
+        "Manage users, organizations, projects, and customers.",
+        {
             "create_user": _action("POST", "/user/new"),
             "get_user": _action("GET", "/user/info"),
             "update_user": _action("POST", "/user/update"),
@@ -179,18 +156,10 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "customer_daily_activity": _action("GET", "/customer/daily/activity"),
         },
     ),
-    ToolSpec(
-        name="litellm_budgets_spend",
-        description=(
-            "Manage budgets, spend tracking, tags, cost estimation, and IP allowlists. "
-            "Actions: create_budget, update_budget, get_budget, list_budgets, delete_budget, "
-            "budget_settings, spend_tags, spend_calculate, spend_logs, spend_logs_v2, "
-            "global_spend_report, global_spend_tags, global_spend_reset, provider_budgets, "
-            "create_tag, update_tag, get_tag, list_tags, delete_tag, tag_daily_activity, "
-            "tag_distinct, tag_dau, tag_wau, tag_mau, tag_summary, tag_per_user_analytics, "
-            "cost_estimate, usage_ai_chat, add_allowed_ip, delete_allowed_ip, agent_daily_activity."
-        ),
-        actions={
+    _spec(
+        "litellm_budgets_spend",
+        "Manage budgets, spend tracking, tags, cost estimation, and IP allowlists.",
+        {
             "create_budget": _action("POST", "/budget/new"),
             "update_budget": _action("POST", "/budget/update"),
             "get_budget": _action("POST", "/budget/info"),
@@ -224,19 +193,10 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "agent_daily_activity": _action("GET", "/agent/daily/activity"),
         },
     ),
-    ToolSpec(
-        name="litellm_runtime",
-        description=(
-            "Inspect health, cache, router, callback, and fallback runtime state. "
-            "Actions: test, health, health_services, health_history, health_latest, "
-            "health_shared_status, health_license, health_readiness, health_backlog, "
-            "health_liveness, health_liveliness, health_test_connection, active_callbacks, "
-            "settings, debug_asyncio_tasks, cache_ping, cache_delete, cache_redis_info, "
-            "cache_flushall, get_cache_settings, update_cache_settings, test_cache_settings, "
-            "list_callbacks, callback_configs, router_settings, router_fields, create_fallback, "
-            "get_fallback, delete_fallback."
-        ),
-        actions={
+    _spec(
+        "litellm_runtime",
+        "Inspect health, cache, router, callback, and fallback runtime state.",
+        {
             "test": _action("GET", "/test"),
             "health": _action("GET", "/health"),
             "health_services": _action("GET", "/health/services"),
@@ -268,16 +228,10 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "delete_fallback": _action("DELETE", "/fallback/{model}"),
         },
     ),
-    ToolSpec(
-        name="litellm_auth_admin",
-        description=(
-            "Manage stored credentials and JWT key mappings. Actions: list_credentials, "
-            "create_credential, get_credential_by_name, get_credential_by_model, "
-            "update_credential, delete_credential, create_jwt_key_mapping, "
-            "update_jwt_key_mapping, delete_jwt_key_mapping, list_jwt_key_mappings, "
-            "get_jwt_key_mapping."
-        ),
-        actions={
+    _spec(
+        "litellm_auth_admin",
+        "Manage stored credentials and JWT key mappings.",
+        {
             "list_credentials": _action("GET", "/credentials"),
             "create_credential": _action("POST", "/credentials"),
             "get_credential_by_name": _action("GET", "/credentials/by_name/{credential_name}"),
@@ -291,32 +245,10 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "get_jwt_key_mapping": _action("GET", "/jwt/key/mapping/info"),
         },
     ),
-    ToolSpec(
-        name="litellm_governance",
-        description=(
-            "Manage prompts, policies, guardrails, and tool policy settings. Actions include "
-            "list_prompts, create_prompt, get_prompt, get_prompt_info, get_prompt_versions, "
-            "update_prompt, patch_prompt, delete_prompt, test_prompt, policies_usage_overview, "
-            "list_policies, create_policy, list_policy_versions, create_policy_version, "
-            "update_policy_status, compare_policy_versions, get_policy, update_policy, "
-            "delete_policy, delete_all_policy_versions, get_policy_resolved_guardrails, "
-            "test_policy_pipeline, list_policy_attachments, create_policy_attachment, "
-            "get_policy_attachment, delete_policy_attachment, resolve_policies, "
-            "estimate_attachment_impact, validate_policy, list_legacy_policies, "
-            "get_policy_info, test_policy_matching, get_policy_templates, "
-            "enrich_policy_template, enrich_policy_template_stream, suggest_policy_templates, "
-            "test_policy_template, list_guardrails, create_guardrail, get_guardrail, "
-            "get_guardrail_info, update_guardrail, patch_guardrail, delete_guardrail, "
-            "register_guardrail, list_guardrail_submissions, get_guardrail_submission, "
-            "approve_guardrail_submission, reject_guardrail_submission, "
-            "validate_blocked_words_file, get_guardrail_ui_settings, get_guardrail_category_yaml, "
-            "get_guardrail_major_airlines, get_guardrail_provider_specific_params, "
-            "test_custom_code_guardrail, apply_guardrail, guardrails_usage_overview, "
-            "guardrails_usage_detail, guardrails_usage_logs, get_tool_policy_options, "
-            "list_tools, get_tool_detail, get_tool, get_tool_logs, update_tool_policy, "
-            "delete_tool_policy_override."
-        ),
-        actions={
+    _spec(
+        "litellm_governance",
+        "Manage prompts, policies, guardrails, and tool policy settings.",
+        {
             "list_prompts": _action("GET", "/prompts/list"),
             "create_prompt": _action("POST", "/prompts"),
             "get_prompt": _action("GET", "/prompts/{prompt_id}"),
@@ -385,15 +317,10 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "delete_tool_policy_override": _action("DELETE", "/v1/tool/{tool_name}/overrides"),
         },
     ),
-    ToolSpec(
-        name="litellm_search_rag",
-        description=(
-            "Manage search tools and LiteLLM RAG endpoints. Actions: list_search_tools, "
-            "create_search_tool, get_search_tool, update_search_tool, delete_search_tool, "
-            "test_search_tool_connection, get_search_tool_providers, search, search_named, "
-            "list_search_backends, rag_ingest, rag_query."
-        ),
-        actions={
+    _spec(
+        "litellm_search_rag",
+        "Manage search tools and LiteLLM RAG endpoints.",
+        {
             "list_search_tools": _action("GET", "/search_tools/list"),
             "create_search_tool": _action("POST", "/search_tools"),
             "get_search_tool": _action("GET", "/search_tools/{search_tool_id}"),
@@ -408,22 +335,10 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "rag_query": _action("POST", "/rag/query"),
         },
     ),
-    ToolSpec(
-        name="litellm_mcp_admin",
-        description=(
-            "Manage LiteLLM's MCP registry, MCP REST bridge, and MCP-related settings. "
-            "Actions: list_mcp_tools, list_mcp_access_groups, get_mcp_client_ip, "
-            "get_mcp_registry, list_mcp_servers, add_mcp_server, edit_mcp_server, "
-            "mcp_server_health, register_mcp_server, list_mcp_submissions, "
-            "approve_mcp_submission, reject_mcp_submission, get_mcp_server, delete_mcp_server, "
-            "add_mcp_oauth_session, store_mcp_user_credential, delete_mcp_user_credential, "
-            "store_mcp_oauth_user_credential, delete_mcp_oauth_user_credential, "
-            "get_mcp_oauth_credential_status, list_mcp_user_credentials, make_mcp_public, "
-            "discover_mcp_servers, get_mcp_openapi_registry, list_mcp_rest_tools, "
-            "call_mcp_rest_tool, test_mcp_rest_connection, test_mcp_rest_list_tools, "
-            "public_mcp_hub, get_mcp_semantic_filter_settings, update_mcp_semantic_filter_settings."
-        ),
-        actions={
+    _spec(
+        "litellm_mcp_admin",
+        "Manage LiteLLM's MCP registry, MCP REST bridge, and MCP-related settings.",
+        {
             "list_mcp_tools": _action("GET", "/v1/mcp/tools"),
             "list_mcp_access_groups": _action("GET", "/v1/mcp/access_groups"),
             "get_mcp_client_ip": _action("GET", "/v1/mcp/network/client-ip"),
@@ -457,21 +372,10 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "update_mcp_semantic_filter_settings": _action("PATCH", "/update/mcp_semantic_filter_settings"),
         },
     ),
-    ToolSpec(
-        name="litellm_config_admin",
-        description=(
-            "Manage proxy configuration and UI/SSO settings. Actions: list_pass_through_endpoints, "
-            "list_team_pass_through_endpoints, create_pass_through_endpoint, update_pass_through_endpoint, "
-            "delete_pass_through_endpoint, get_cost_discount_config, update_cost_discount_config, "
-            "get_cost_margin_config, update_cost_margin_config, get_hashicorp_vault_config, "
-            "update_hashicorp_vault_config, delete_hashicorp_vault_config, "
-            "test_hashicorp_vault_connection, get_internal_user_settings, "
-            "update_internal_user_settings, get_default_team_settings, update_default_team_settings, "
-            "get_sso_settings, update_sso_settings, sso_readiness, get_ui_theme_settings, "
-            "update_ui_theme_settings, get_ui_settings, update_ui_settings, get_email_event_settings, "
-            "update_email_event_settings, reset_email_event_settings, upload_logo, in_product_nudges."
-        ),
-        actions={
+    _spec(
+        "litellm_config_admin",
+        "Manage proxy configuration and UI/SSO settings.",
+        {
             "list_pass_through_endpoints": _action("GET", "/config/pass_through_endpoint"),
             "list_team_pass_through_endpoints": _action("GET", "/config/pass_through_endpoint/team/{team_id}"),
             "create_pass_through_endpoint": _action("POST", "/config/pass_through_endpoint"),
@@ -503,17 +407,10 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "in_product_nudges": _action("GET", "/in_product_nudges"),
         },
     ),
-    ToolSpec(
-        name="litellm_exports_audit",
-        description=(
-            "Manage CloudZero, Vantage, audit logs, and compliance checks. Actions: "
-            "get_cloudzero_settings, update_cloudzero_settings, init_cloudzero, "
-            "cloudzero_dry_run, cloudzero_export, delete_cloudzero_settings, "
-            "get_vantage_settings, update_vantage_settings, init_vantage, "
-            "vantage_dry_run, vantage_export, delete_vantage_settings, list_audit_logs, "
-            "get_audit_log, check_eu_ai_act, check_gdpr."
-        ),
-        actions={
+    _spec(
+        "litellm_exports_audit",
+        "Manage CloudZero, Vantage, audit logs, and compliance checks.",
+        {
             "get_cloudzero_settings": _action("GET", "/cloudzero/settings"),
             "update_cloudzero_settings": _action("PUT", "/cloudzero/settings"),
             "init_cloudzero": _action("POST", "/cloudzero/init"),
@@ -546,23 +443,23 @@ FAMILY_TOOL_SPECS_BY_NAME = {tool_spec.name: tool_spec for tool_spec in TOOL_SPE
 FAMILY_TOOL_NAMES = frozenset(FAMILY_TOOL_SPECS_BY_NAME)
 ALL_TOOL_NAMES = FAMILY_TOOL_NAMES | DISCOVERY_TOOL_NAMES | ESCAPE_HATCH_TOOL_NAMES
 
-TOOL_PROFILES = {
-    "none": ToolProfile(
+_PROFILES: tuple[ToolProfile, ...] = (
+    ToolProfile(
         name="none",
         description="Start with no tools and add individual tools explicitly.",
         tools=frozenset(),
     ),
-    "discovery": ToolProfile(
+    ToolProfile(
         name="discovery",
         description="Expose route-discovery helpers without broader admin capabilities.",
         tools=DISCOVERY_TOOL_NAMES,
     ),
-    "catalog": ToolProfile(
+    ToolProfile(
         name="catalog",
         description="Expose public and internal model-catalog discovery endpoints.",
         tools=frozenset({"litellm_models_catalog"}),
     ),
-    "access_admin": ToolProfile(
+    ToolProfile(
         name="access_admin",
         description="Manage keys, teams, and related access-control workflows.",
         tools=frozenset(
@@ -572,7 +469,7 @@ TOOL_PROFILES = {
             }
         ),
     ),
-    "identity_admin": ToolProfile(
+    ToolProfile(
         name="identity_admin",
         description="Manage users, organizations, projects, customers, and credentials.",
         tools=frozenset(
@@ -582,7 +479,7 @@ TOOL_PROFILES = {
             }
         ),
     ),
-    "spend_admin": ToolProfile(
+    ToolProfile(
         name="spend_admin",
         description="Manage budgets, spend analytics, exports, and compliance checks.",
         tools=frozenset(
@@ -592,37 +489,37 @@ TOOL_PROFILES = {
             }
         ),
     ),
-    "runtime_ops": ToolProfile(
+    ToolProfile(
         name="runtime_ops",
         description="Inspect and operate runtime health, cache, router, and callback state.",
         tools=frozenset({"litellm_runtime"}),
     ),
-    "governance": ToolProfile(
+    ToolProfile(
         name="governance",
         description="Manage prompts, policies, guardrails, and tool-policy settings.",
         tools=frozenset({"litellm_governance"}),
     ),
-    "search_rag": ToolProfile(
+    ToolProfile(
         name="search_rag",
         description="Manage LiteLLM search tools plus search and RAG workflows.",
         tools=frozenset({"litellm_search_rag"}),
     ),
-    "mcp_admin": ToolProfile(
+    ToolProfile(
         name="mcp_admin",
         description="Manage LiteLLM MCP registry, bridge, and MCP-specific settings.",
         tools=frozenset({"litellm_mcp_admin"}),
     ),
-    "config_admin": ToolProfile(
+    ToolProfile(
         name="config_admin",
         description="Manage proxy, SSO, UI, vault, and pass-through endpoint settings.",
         tools=frozenset({"litellm_config_admin"}),
     ),
-    "native_escape_hatch": ToolProfile(
+    ToolProfile(
         name="native_escape_hatch",
         description="Enable the generic native-request tool for uncovered LiteLLM-native routes.",
         tools=DISCOVERY_TOOL_NAMES | ESCAPE_HATCH_TOOL_NAMES,
     ),
-    "core": ToolProfile(
+    ToolProfile(
         name="core",
         description=(
             "Default compact toolset for common LiteLLM administration: discovery, "
@@ -638,7 +535,7 @@ TOOL_PROFILES = {
             }
         ),
     ),
-    "platform_admin": ToolProfile(
+    ToolProfile(
         name="platform_admin",
         description="Broad LiteLLM platform administration without the generic escape hatch.",
         tools=DISCOVERY_TOOL_NAMES
@@ -655,14 +552,14 @@ TOOL_PROFILES = {
             }
         ),
     ),
-    "full": ToolProfile(
+    ToolProfile(
         name="full",
         description="Expose every MCP tool implemented by this server, including the escape hatch.",
         tools=ALL_TOOL_NAMES,
     ),
-}
+)
 
-DEFAULT_TOOL_PROFILES = ("core",)
+TOOL_PROFILES = {profile.name: profile for profile in _PROFILES}
 
 
 def _normalize_names(names: Iterable[str]) -> tuple[str, ...]:

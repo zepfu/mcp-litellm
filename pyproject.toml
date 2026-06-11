@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-litellm"
-version = "0.0.1rc2"
+version = "0.2.0"
 description = "MCP server for LiteLLM native API workflows"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -87,8 +87,6 @@ paths = ["src/mcp_litellm", "tests"]
 min_confidence = 80
 ignore_decorators = [
   "@pytest.fixture",
-  "@click.command",
-  "@click.group",
 ]
 ignore_names = [
   "pytest_*",

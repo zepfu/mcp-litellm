@@ -10,11 +10,24 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from mcp_litellm._parsing import split_csv
+
 PACKAGE_ROOT = Path(__file__).resolve().parent
+
+DEFAULT_TOOL_PROFILES = ("core",)
 
 
 def default_openapi_path() -> Path:
-    """Resolve the bundled OpenAPI snapshot path without depending on cwd."""
+    """Resolve the bundled OpenAPI snapshot path without depending on cwd.
+
+    The packaged path is used for installed wheels (the spec is force-included
+    under ``mcp_litellm/_data``). The repo-vendored path is the editable-install
+    fallback used during development, where the spec lives under ``vendor/``
+    rather than inside the package.
+
+    Raises:
+        FileNotFoundError: If neither candidate path exists.
+    """
     packaged_path = PACKAGE_ROOT / "_data" / "openapi.json"
     if packaged_path.exists():
         return packaged_path
@@ -23,7 +36,8 @@ def default_openapi_path() -> Path:
     if repo_vendored_path.exists():
         return repo_vendored_path
 
-    return packaged_path
+    message = f"Could not locate the vendored LiteLLM OpenAPI spec. Probed paths: {packaged_path}, {repo_vendored_path}."
+    raise FileNotFoundError(message)
 
 
 class Settings(BaseSettings):
@@ -32,7 +46,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="MCP_LITELLM_",
         env_file=".env",
-        env_nested_delimiter="__",
         extra="ignore",
     )
 
@@ -41,24 +54,24 @@ class Settings(BaseSettings):
     timeout_seconds: float = Field(default=60.0, gt=0)
     max_response_bytes: int = Field(default=5_000_000, gt=0)
     include_bearer_auth: bool = Field(default=True)
+    allow_local_file_uploads: bool = Field(default=True)
 
     transport: Literal["stdio", "sse", "streamable-http"] = Field(default="stdio")
     host: str = Field(default="127.0.0.1")
-    port: int = Field(default=8000)
+    port: int = Field(default=8000, ge=1, le=65535)
     mount_path: str = Field(default="/")
     sse_path: str = Field(default="/sse")
     message_path: str = Field(default="/messages/")
     streamable_http_path: str = Field(default="/mcp")
 
     openapi_path: Path = Field(default_factory=default_openapi_path)
-    tool_profiles: tuple[str, ...] = Field(default=("core",))
+    tool_profiles: tuple[str, ...] = Field(default=DEFAULT_TOOL_PROFILES)
     enable_tools: tuple[str, ...] = Field(default=())
     disable_tools: tuple[str, ...] = Field(default=())
 
     @field_validator("tool_profiles", "enable_tools", "disable_tools", mode="before")
     @classmethod
     def _parse_name_list(cls, value: object) -> object:
-        _ = cls
         if value is None:
             return value
         if isinstance(value, str):
@@ -70,10 +83,12 @@ class Settings(BaseSettings):
                 if not isinstance(parsed_value, list):
                     message = "Expected a JSON array for tool-selection settings."
                     raise ValueError(message)
-                return tuple(str(item) for item in parsed_value if str(item).strip())
-            return tuple(item.strip() for item in stripped_value.split(",") if item.strip())
-        if isinstance(value, list | tuple | set | frozenset):
-            return tuple(str(item) for item in value if str(item).strip())
+                return tuple(str(item).strip() for item in parsed_value if str(item).strip())
+            return split_csv(stripped_value)
+        if isinstance(value, set | frozenset):
+            return tuple(sorted(str(item).strip() for item in value if str(item).strip()))
+        if isinstance(value, list | tuple):
+            return tuple(str(item).strip() for item in value if str(item).strip())
         message = "Tool-selection settings must be a string or iterable of strings."
         raise TypeError(message)
 

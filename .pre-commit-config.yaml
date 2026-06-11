@@ -30,7 +30,7 @@ repos:
         name: actionlint
         entry: >-
           bash -lc 'docker run --rm -v "$PWD:/repo" -w /repo
-          docker.io/rhysd/actionlint:1.7.12 actionlint "$@"' --
+          docker.io/rhysd/actionlint:1.7.12 "$@"' --
         language: system
         files: ^\.github/workflows/
         types: [yaml]

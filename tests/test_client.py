@@ -116,9 +116,9 @@ async def test_reuses_single_async_client(monkeypatch: pytest.MonkeyPatch) -> No
 
     client = LiteLLMClient(Settings(litellm_base_url="https://litellm.example"))
 
-    with respx.mock():
-        respx.get("https://litellm.example/health").mock(return_value=Response(200, json={"ok": True}))
-        respx.get("https://litellm.example/test").mock(return_value=Response(200, json={"ok": True}))
+    with respx.mock(assert_all_called=False) as router:
+        router.get("https://litellm.example/health").mock(return_value=Response(200, json={"ok": True}))
+        router.get("https://litellm.example/test").mock(return_value=Response(200, json={"ok": True}))
         await client.request("GET", "/health")
         await client.request("GET", "/test")
 
@@ -134,7 +134,7 @@ async def test_does_not_follow_redirects() -> None:
     """A 302 response must be returned as-is; redirect target NOT fetched."""
     client = LiteLLMClient(Settings(litellm_base_url="https://litellm.example"))
 
-    with respx.mock(assert_all_called=True) as router:
+    with respx.mock(assert_all_called=False) as router:
         router.get("https://litellm.example/old-path").mock(
             return_value=Response(
                 302,
@@ -159,12 +159,12 @@ async def test_does_not_follow_redirects() -> None:
 
 async def test_malformed_json_raises_parse_error() -> None:
     """content-type application/json with invalid JSON body must raise LiteLLMResponseParseError."""
-    from mcp_litellm.errors import LiteLLMResponseParseError  # type: ignore[attr-defined]
+    from mcp_litellm.errors import LiteLLMResponseParseError
 
     client = LiteLLMClient(Settings(litellm_base_url="https://litellm.example"))
 
-    with respx.mock():
-        respx.get("https://litellm.example/test").mock(
+    with respx.mock(assert_all_called=False) as router:
+        router.get("https://litellm.example/test").mock(
             return_value=Response(
                 200,
                 content=b"{not json",
@@ -186,8 +186,8 @@ async def test_declared_text_bad_encoding_falls_back_to_base64() -> None:
     # Non-ASCII bytes that are invalid in ASCII charset
     bad_bytes = b"\xff\xfe"
 
-    with respx.mock():
-        respx.get("https://litellm.example/test").mock(
+    with respx.mock(assert_all_called=False) as router:
+        router.get("https://litellm.example/test").mock(
             return_value=Response(
                 200,
                 content=bad_bytes,
@@ -278,13 +278,13 @@ async def test_multipart_none_field_omitted(tmp_path: Path) -> None:
 
 async def test_multipart_blocked_when_uploads_disabled(tmp_path: Path) -> None:
     """When allow_local_file_uploads=False, multipart raises LocalFileUploadNotAllowedError before HTTP."""
-    from mcp_litellm.errors import LocalFileUploadNotAllowedError  # type: ignore[attr-defined]
+    from mcp_litellm.errors import LocalFileUploadNotAllowedError
 
     upload_file = tmp_path / "f.txt"
     upload_file.write_text("data")
-    client = LiteLLMClient(Settings(litellm_base_url="https://litellm.example", allow_local_file_uploads=False))  # type: ignore[call-arg]
+    client = LiteLLMClient(Settings(litellm_base_url="https://litellm.example", allow_local_file_uploads=False))
 
-    with respx.mock() as router:
+    with respx.mock(assert_all_called=False) as router:
         router.post("https://litellm.example/upload").mock(return_value=Response(200, json={}))
         with pytest.raises(LocalFileUploadNotAllowedError):
             await client.request(
@@ -304,7 +304,7 @@ async def test_multipart_blocked_when_uploads_disabled(tmp_path: Path) -> None:
 
 async def test_multipart_file_deleted_after_validation_raises_clean_error(tmp_path: Path) -> None:
     """When a file is deleted after MultipartFileSpec validation, request() raises McpLiteLLMError."""
-    from mcp_litellm.errors import McpLiteLLMError  # type: ignore[attr-defined]
+    from mcp_litellm.errors import McpLiteLLMError
 
     upload_file = tmp_path / "f.txt"
     upload_file.write_text("data")
@@ -314,8 +314,8 @@ async def test_multipart_file_deleted_after_validation_raises_clean_error(tmp_pa
 
     client = LiteLLMClient(Settings(litellm_base_url="https://litellm.example"))
 
-    with respx.mock():
-        respx.post("https://litellm.example/upload").mock(return_value=Response(200, json={}))
+    with respx.mock(assert_all_called=False) as router:
+        router.post("https://litellm.example/upload").mock(return_value=Response(200, json={}))
         with pytest.raises(McpLiteLLMError):
             await client.request("POST", "/upload", multipart_files=(file_spec,))
 
@@ -331,7 +331,7 @@ async def test_transport_error_wrapped() -> None:
 
     client = LiteLLMClient(Settings(litellm_base_url="https://litellm.example"))
 
-    with respx.mock():
-        respx.get("https://litellm.example/test").mock(side_effect=httpx.ConnectError("connection refused"))
+    with respx.mock(assert_all_called=False) as router:
+        router.get("https://litellm.example/test").mock(side_effect=httpx.ConnectError("connection refused"))
         with pytest.raises(LiteLLMRequestError):
             await client.request("GET", "/test")

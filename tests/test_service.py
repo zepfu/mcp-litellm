@@ -27,7 +27,7 @@ def test_render_path_url_encodes_path_parameters() -> None:
 
 def test_render_path_rejects_empty_value() -> None:
     """_render_path must raise when a path param value is empty or whitespace."""
-    from mcp_litellm.errors import InvalidPathParameterError  # type: ignore[attr-defined]
+    from mcp_litellm.errors import InvalidPathParameterError
 
     with pytest.raises((InvalidPathParameterError, ValueError)):
         LiteLLMToolService._render_path("/key/{k}", {"k": ""})
@@ -40,7 +40,7 @@ def test_render_path_rejects_empty_value() -> None:
 
 def test_render_path_rejects_surplus_keys() -> None:
     """_render_path must raise InvalidPathParameterError for extra keys not in the template."""
-    from mcp_litellm.errors import InvalidPathParameterError  # type: ignore[attr-defined]
+    from mcp_litellm.errors import InvalidPathParameterError
 
     with pytest.raises(InvalidPathParameterError):
         LiteLLMToolService._render_path("/key/{k}", {"k": "a", "extra": "b"})
@@ -90,7 +90,7 @@ async def test_denied_route_key_rejected() -> None:
         await service.execute_route_key(
             "GET /x",
             allowed_classifications={"typed"},
-            denied_route_keys={"GET /x"},  # type: ignore[call-arg]
+            denied_route_keys={"GET /x"},
         )
 
     # The HTTP request must NOT have been made
