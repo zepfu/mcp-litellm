@@ -336,7 +336,7 @@ wheels = [
 
 [[package]]
 name = "mcp-litellm"
-version = "0.0.1rc2"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
